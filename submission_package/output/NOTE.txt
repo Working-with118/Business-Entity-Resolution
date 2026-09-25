@@ -1,0 +1,13 @@
+This folder is populated by running the pipeline against the real challenge
+dataset:
+
+    python main.py --data-dir dataset --output-dir output --model-dir model
+
+(run from code/business_entity_resolution/). It will then contain:
+  - matching_results.tsv
+  - candidate_pairs.tsv
+
+No dataset was available in the environment this project was built in, so
+these outputs could not be generated here — the pipeline itself has been
+smoke-tested end-to-end on synthetic data to confirm it runs and produces
+correctly-formatted output (see README.md).
