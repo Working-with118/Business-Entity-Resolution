@@ -15,6 +15,13 @@ the noise patterns called out in the problem statement.
 import re
 import unicodedata
 
+try:
+    from anyascii import anyascii as _anyascii
+except ImportError:  # pragma: no cover - keeps the pipeline usable if the
+    # optional dependency isn't installed yet; falls back to accent-stripping
+    # only (won't transliterate non-Latin scripts, but won't crash either).
+    _anyascii = None
+
 # ---------------------------------------------------------------------------
 # Legal-suffix / abbreviation normalization for business names
 # ---------------------------------------------------------------------------
@@ -69,7 +76,25 @@ _WS_RE = re.compile(r"\s+")
 
 
 def _strip_accents(text: str) -> str:
-    """Fold accented / transliterated characters to plain ASCII where possible."""
+    """Fold accented and non-Latin-script characters to plain ASCII.
+
+    ~13.9% of true matches in the training ground truth pair a Latin-script
+    Source-1 name against a Source-2/3 name written in native script
+    (Devanagari, Tamil, etc.) — Source 1 is always Latin-script (0% non-ASCII
+    in training), but S2/S3 are not. Every downstream string feature
+    (Levenshtein, token Jaccard) sees these as completely disjoint strings
+    unless they're first brought into a common alphabet, so this is not
+    optional accent-stripping — it's what makes ~14% of true matches visible
+    to the feature set at all.
+
+    Uses `anyascii`, a static, offline character-transliteration table (not a
+    lookup service), which keeps this compliant with the "no external data
+    lookup" rule the same way a hand-written abbreviation map is. Falls back
+    to NFKD accent-folding (handles accented Latin, e.g. French test-set
+    names, but not other scripts) if the dependency is missing.
+    """
+    if _anyascii is not None:
+        return _anyascii(text)
     nfkd = unicodedata.normalize("NFKD", text)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
@@ -159,3 +184,29 @@ def blocking_key(name_core: str, n: int = 4) -> str:
         return ""
     toks = sorted(t[:n] for t in name_core.split() if t)
     return "".join(toks)
+
+
+_NUM_RE = re.compile(r"\d+")
+
+
+def address_block_key(address_norm: str, country_norm: str) -> str:
+    """Country + the (up to two) numeric tokens in a normalized address --
+    house/unit/PIN numbers. Catches matches that name-based keys miss
+    entirely (cross-script names, heavy typos, transliteration) as long as
+    the address carries a shared numeric identifier, which is common for
+    branches of the same business or partial-address noise."""
+    nums = _NUM_RE.findall(address_norm or "")
+    if not nums:
+        return ""
+    return f"{country_norm}:{'-'.join(sorted(nums)[:2])}"
+
+
+def loose_name_key(name_core: str, n: int = 3) -> str:
+    """Looser companion to blocking_key: only the first two (sorted) tokens'
+    first n chars, not every token. Requiring agreement on every token is
+    brittle when one source drops or adds a middle word (e.g. a DBA name or
+    a dropped legal suffix) -- this key still finds those pairs."""
+    if not name_core:
+        return ""
+    toks = sorted(name_core.split())[:2]
+    return "".join(t[:n] for t in toks if t)
